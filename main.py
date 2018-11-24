@@ -1,18 +1,19 @@
 
 from subprocess import Popen,PIPE,STDOUT
-from time import time
+from time import sleep,time
 import bs4
 from androidKeyMaps import KEY_MAP
 STR_OPENING_SQUARE_BRACKET = "["
 STR_CLOSING_SQUARE_BRACKET = "]"
 listOfPrevValues = []
-
+master = "192.168.0.104:5000"
+slave = "TA99300IWW"
 def main():
     STR_POS_Y = "ABS_MT_POSITION_X"
     STR_POS_X = "ABS_MT_POSITION_Y"
     listOfPosWithTime = []
-
-    streamFromAdb = Popen(["adb", "shell", "getevent", "-lt"],stdout=PIPE,stderr=STDOUT,bufsize=0)
+    initialisePreviousValue()
+    streamFromAdb = Popen(["adb", "-s", master, "shell", "getevent", "-lt"],stdout=PIPE,stderr=STDOUT,bufsize=0)
 
 
     for line in iter(streamFromAdb.stdout.readline, b''):
@@ -26,9 +27,10 @@ def main():
                   if (len(listOfPosWithTime) == 1):
                     lastTime = time() # lasttime is initialised here
                     initialisePreviousValue()
-                  if (currentTime - lastTime > 0.5):
+                  if (currentTime - lastTime > 1):
                     getEventType(listOfPosWithTime)
                     listOfPosWithTime = []
+
 
 
 
@@ -44,8 +46,8 @@ def main():
 
 
 def initialisePreviousValue():
-    Popen(["adb", "shell", "uiautomator", "dump"])
-    outputXML = Popen(["adb", "shell", "cat", "/sdcard/window_dump.xml"],stdout=PIPE).communicate()[0]
+    Popen(["adb", "-s", master, "shell", "uiautomator", "dump"])
+    outputXML = Popen(["adb", "-s", master, "shell", "cat", "/sdcard/window_dump.xml"],stdout=PIPE).communicate()[0]
     soup = bs4.BeautifulSoup(outputXML,'xml')
     editTextList = soup.findAll("node", {"class": "android.widget.EditText"})
     i = 0
@@ -89,40 +91,53 @@ def getEventType(listOfPosWithTime):
     if(textNotEntered()):
         if intervalOfEvent > 0.1:
 
-            if diffBetHeight < 8 or diffBetweenWidth < 8:
-                Popen(["adb", "shell", "input", "touchscreen", "swipe",
-                       firstWidth,firstHeight,
-                       firstWidth,firstHeight,
+            if diffBetHeight < 16 or diffBetweenWidth < 16:
+                Popen(["adb", "-s", slave, "shell", "input", "touchscreen", "swipe",
+                       firstHeight, firstWidth,
+                       firstHeight, firstWidth,    
                        '1000'])
                 print("Long Press")
             else:
-                Popen(["adb", "shell", "input", "touchscreen", "swipe",
-                       firstWidth, firstHeight,
-                       lastWidth, firstHeight,
+                Popen(["adb", "-s", slave, "shell", "input", "touchscreen", "swipe",
+                       firstHeight, firstWidth,
+                       lastHeight, lastWidth,
                        '1000'])
                 print("Swipe")
 
         else:
-            Popen(["adb", "shell", "input", "tap",
+            Popen(["adb", "-s", slave, "shell", "input", "tap",
                    firstWidth, firstHeight])
             print("Click")
 
 
 
+def getEditText(device):
+    Popen(["adb", "-s", master, "shell", "uiautomator", "dump"])
+    outputXML = Popen(["adb", "-s", device, "shell", "cat", "/sdcard/window_dump.xml"],stdout=PIPE).communicate()[0]
+    soup = bs4.BeautifulSoup(outputXML,'xml')
+    editTextList = soup.findAll("node", {"class": "android.widget.EditText"})
+    return editTextList
+
+
 
 
 def textNotEntered():
-    Popen(["adb", "shell", "uiautomator", "dump"])
-    outputXML = Popen(["adb", "shell", "cat", "/sdcard/window_dump.xml"],stdout=PIPE).communicate()[0]
-    soup = bs4.BeautifulSoup(outputXML,'xml')
-    editTextList = soup.findAll("node", {"class": "android.widget.EditText"})
-    i = 0
-    for editText in editTextList:
-        i = i + 1
-        print(editText['text'])
-        if len(listOfPrevValues)!=len(editText):
-            compareAndType(editText['text'],listOfPrevValues[i])
-            return False
+    editTextList =  getEditText(master)
+
+    for i in range(len(editTextList)):
+
+        while editTextList[i]['focused']=="true" :
+            editTextList =  getEditText(master)
+            sleep(0.1)
+            if len(editTextList)>0:
+                editTextList[i]['password']='false'
+                print("hey",editTextList[i]['text'])
+                textEntered = editTextList[i]['text']
+            if len(editTextList)<=0 or editTextList[i]['focused']=="false":
+                typeInSlave(textEntered,i)
+                return False
+
+
 
 
     return True
@@ -133,18 +148,15 @@ def textNotEntered():
 
 
 
-def compareAndType(editText,prevEditText):
-    lenOfEditText = len(editText)
-    lenOfPrevEditText = len(prevEditText)
-    if lenOfEditText < lenOfPrevEditText:
-        for i in range(lenOfEditText-1,lenOfPrevEditText):
-            Popen(["adb","shell","input","keyevent",KEY_MAP['BACKSLASH']])
-    else:
-        for i in range(lenOfPrevEditText-1,lenOfEditText):
-            inputText = prevEditText[i]
-            print(inputText)
-            Popen(["adb", "shell", "input", "text",inputText])
-
+def typeInSlave(textToBeEntered,currentEditText):
+     editTextList =  getEditText(slave)
+     positionOfEditText = editTextList[currentEditText]['bounds']
+     bound_X = int(positionOfEditText[positionOfEditText.find("[")+1:positionOfEditText.find(",")]) +1
+     bound_Y = int(positionOfEditText[positionOfEditText.find(",")+1:positionOfEditText.find("]")]) +1
+     print(bound_X,bound_Y)
+     Popen(["adb", "-s", slave, "shell", "input", "tap",str(bound_X),str(bound_Y)])
+     sleep(2)
+     Popen(["adb", "-s", slave, "shell", "input", "text",textToBeEntered])
 
 
 
